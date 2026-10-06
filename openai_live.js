@@ -163,6 +163,12 @@ function refreshEngineControls() {
     }
   }
 }
+window.configureEngines = function(data) {
+  window.engineConfig = data;
+  el('voiceEngine').querySelector('[value="local"]').disabled = data.local_enabled !== true;
+  if (!data.local_enabled && !selectedOpenAI()) el('voiceEngine').value = 'openai';
+  refreshEngineControls();
+};
 window.refreshEngineControls = refreshEngineControls;
 const renderBeforeEngines = render;
 render = function(){renderBeforeEngines();refreshEngineControls();};
@@ -171,6 +177,7 @@ el('toggle').onclick = () => selectedOpenAI() ?
   (recording ? stop().catch(error=>fail(error.message)) : start());
 el('voiceEngine').onchange = () => {
   if (recording || stopping || enrolling || openaiVoice.state !== 'idle') return;
+  if (!selectedOpenAI() && window.engineConfig?.local_enabled !== true) {el('voiceEngine').value='openai';refreshEngineControls();return;}
   if (!selectedOpenAI()) el('openaiApiKey').value = '';
   render();el('error').textContent='';
   el('status').textContent=selectedOpenAI()?'آماده مکالمه با OpenAI':'آماده شنیدن';
@@ -192,4 +199,5 @@ window.addEventListener('pagehide',()=>{
   if (openaiVoice.dc?.readyState==='open') openaiVoice.dc.send(JSON.stringify({type:'session.close'}));
   openaiVoice.cleanup();
 });
+if (window.engineConfig) configureEngines(window.engineConfig);
 render();

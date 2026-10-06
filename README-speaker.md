@@ -1,3 +1,5 @@
+Local is disabled by default. Enable it explicitly as shown below. For the default OpenAI setup, see [README.md](README.md).
+
 Target-speaker verification
 ===========================
 
@@ -7,7 +9,7 @@ Use the existing environment on Sharif:
 cd ~/Music/whisper
 source .venv/bin/activate
 python enroll_speaker.py patient.wav
-python app.py
+python app.py --enable-local
 ```
 
 Provide 15–30 seconds of clean speech in WAV format. The embedding is saved to
@@ -27,11 +29,11 @@ python realtime_stt.py --speaker-threshold 0.5
 ECAPA and Whisper remain loaded. Every completed Silero utterance passes through
 speaker verification before Whisper. Other speakers are ignored.
 
-Frontend default: `SPEAKER_THRESHOLD=0.6 python app.py`.
-Alternate profile: `TARGET_SPEAKER=/path/profile.pt python app.py` or terminal
+Frontend default: `SPEAKER_THRESHOLD=0.6 python app.py --enable-local`.
+Alternate profile: `TARGET_SPEAKER=/path/profile.pt python app.py --enable-local` or terminal
 `--speaker /path/profile.pt`. Enrollment supports `--output /path/profile.pt`.
 
-Tests: `python -m unittest discover -v`. Official SpeechBrain samples tested
+Tests: `ENABLE_LOCAL_STT=1 python -m unittest discover -v`. Official SpeechBrain samples tested
 a held-out target voice, another speaker, and attenuated other speech simulating
 distance through the complete pipeline. Actual room/voice validation still needs
 your enrollment and comparison recordings.

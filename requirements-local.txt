@@ -1,0 +1,14 @@
+# Optional Linux Local engine only. Install compatible torch/torchaudio builds
+# from https://pytorch.org/get-started/locally/ first if CUDA is required.
+-r requirements.txt
+numpy>=1.26,<3
+scipy>=1.11,<2
+soundfile>=0.12,<1
+soxr>=0.3,<2
+silero-vad==6.2.3
+speechbrain==1.1.1
+transformers==4.57.6
+sounddevice>=0.5,<1
+websockets>=14,<18
+torch>=2.2
+torchaudio>=2.2

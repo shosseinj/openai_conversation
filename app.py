@@ -10,21 +10,32 @@ from pathlib import Path
 import threading
 from time import perf_counter
 
-import numpy as np
-import torch
-from scipy.signal import resample_poly
-from transformers import pipeline
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException
 from fastapi.responses import FileResponse
-from live_vad import SpeechDetector
-from noise_suppression import BrowserNoiseSuppressor
-from speaker_filter import SpeakerFilter
-from loudness_gate import measure
 from openai_voice import router as openai_voice_router
 
 ROOT = Path(__file__).resolve().parent
 lock = threading.Lock()
-speaker_filter = SpeakerFilter()
+ENABLE_LOCAL = os.environ.get("ENABLE_LOCAL_STT", "0").lower() in ("1", "true", "yes")
+speaker_filter = None
+
+
+def load_local_components():
+    global np, torch, resample_poly, pipeline, SpeechDetector, BrowserNoiseSuppressor, measure, speaker_filter
+    import numpy as np
+    import torch
+    from scipy.signal import resample_poly
+    from transformers import pipeline
+    from live_vad import SpeechDetector
+    from noise_suppression import BrowserNoiseSuppressor
+    from speaker_filter import SpeakerFilter
+    from loudness_gate import measure
+    if speaker_filter is None:
+        speaker_filter = SpeakerFilter()
+
+
+if ENABLE_LOCAL:
+    load_local_components()
 PROFILE = Path(os.environ.get("TARGET_SPEAKER", str(ROOT / "target_speaker.pt")))
 DEFAULT_THRESHOLD = float(os.environ.get("SPEAKER_THRESHOLD", "0.5"))
 MIN_DBFS = -40  # Compatibility value for the diagnostic meter only.
@@ -32,6 +43,11 @@ MIN_DBFS = -40  # Compatibility value for the diagnostic meter only.
 
 @asynccontextmanager
 async def lifespan(app):
+    if not ENABLE_LOCAL:
+        print("OpenAI only: Local models are disabled and will not be loaded.", flush=True)
+        yield
+        return
+    load_local_components()
     await asyncio.to_thread(speaker_filter.load)
     cuda = torch.cuda.is_available()
     app.state.transcriber = pipeline(
@@ -57,11 +73,13 @@ async def certificate():
 
 @app.get("/health")
 async def health():
-    return {"ready": True, "gpu": torch.cuda.is_available(), "speaker_enrolled": PROFILE.is_file(), "speaker_threshold": DEFAULT_THRESHOLD, "min_dbfs": MIN_DBFS}
+    return {"ready": True, "local_enabled": ENABLE_LOCAL, "default_engine": "openai", "gpu": torch.cuda.is_available() if ENABLE_LOCAL else False, "speaker_enrolled": PROFILE.is_file(), "speaker_threshold": DEFAULT_THRESHOLD, "min_dbfs": MIN_DBFS}
 
 
 @app.post("/enroll")
 async def enroll(file: UploadFile = File(...)):
+    if not ENABLE_LOCAL:
+        raise HTTPException(503, "Local engine is disabled; start with --enable-local to enroll a speaker")
     contents = await file.read(32 * 1024 * 1024 + 1)
     await file.close()
     if len(contents) > 32 * 1024 * 1024:
@@ -97,6 +115,10 @@ def transcribe(audio, rate, threshold=DEFAULT_THRESHOLD):
 @app.websocket("/listen")
 async def listen(ws: WebSocket):
     await ws.accept()
+    if not ENABLE_LOCAL:
+        await ws.send_json({"error": "Local engine is disabled; start with --enable-local to use it"})
+        await ws.close(code=1008)
+        return
     suppressor = None
     try:
         config = await ws.receive_json()
@@ -201,44 +223,29 @@ async def listen(ws: WebSocket):
             await asyncio.to_thread(suppressor.close)
 
 
-def free_port(port):
-    """Stop the old server before loading another copy of the GPU model."""
-    import shutil
-    import time
-
-    fuser = shutil.which("fuser")
-    if not fuser:
-        raise RuntimeError("Port cleanup requires fuser (Ubuntu package: psmisc)")
-    target = f"{port}/tcp"
-
-    def occupied():
-        result = subprocess.run([fuser, target], capture_output=True)
-        if result.returncode not in (0, 1):
-            raise RuntimeError(result.stderr.decode(errors="replace").strip())
-        return result.returncode == 0
-
-    if not occupied():
-        return
-    print(f"Port {port} is in use; stopping the previous process…", flush=True)
-    subprocess.run([fuser, "-k", "-TERM", target], capture_output=True)
-    for _ in range(50):
-        if not occupied():
-            return
-        time.sleep(0.1)
-    print(f"Process on port {port} did not stop; forcing termination…", flush=True)
-    subprocess.run([fuser, "-k", "-KILL", target], capture_output=True)
-    for _ in range(20):
-        if not occupied():
-            return
-        time.sleep(0.1)
-    raise RuntimeError(f"Cannot free port {port}; check process ownership")
+from server_runtime import free_port
 
 
 if __name__ == "__main__":
+    import argparse
     import uvicorn
-    free_port(8500)
-    uvicorn.run(
-        app, host="0.0.0.0", port=8500,
-        ssl_keyfile=str(ROOT / "certs" / "server.key"),
-        ssl_certfile=str(ROOT / "certs" / "server.crt"),
-    )
+    from server_runtime import ensure_https, open_browser_when_ready
+
+    parser = argparse.ArgumentParser(description="Persian voice frontend; OpenAI only by default")
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=8500)
+    parser.add_argument("--enable-local", action="store_true", help="Also load the existing Local STT models")
+    parser.add_argument("--open-browser", action="store_true")
+    args = parser.parse_args()
+    if not 1 <= args.port <= 65535:
+        parser.error("--port must be between 1 and 65535")
+    ENABLE_LOCAL = ENABLE_LOCAL or args.enable_local
+    keyfile, certfile = ensure_https(ROOT)
+    free_port(args.port)
+    address = "localhost" if args.host in ("0.0.0.0", "::") else args.host
+    url = f"https://{address}:{args.port}"
+    print(f"Frontend: {url} | binding {args.host}:{args.port}", flush=True)
+    if args.open_browser:
+        threading.Thread(target=open_browser_when_ready, args=(url, ROOT), daemon=True).start()
+    uvicorn.run(app, host=args.host, port=args.port,
+                ssl_keyfile=str(keyfile), ssl_certfile=str(certfile))
