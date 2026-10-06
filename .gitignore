@@ -1,0 +1,40 @@
+# Existing Python environment and generated files
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+
+# Local secrets and HTTPS certificates
+.env
+.env.*
+!.env.example
+!.env.sample
+/certs/
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Downloaded models and native DeepFilterNet runtime
+/model/
+/speaker_model/
+/deepfilter/
+
+# Private speaker enrollment, recordings and diagnostic outputs
+/target_speaker.pt
+/target_speaker.pt.tmp
+/diagnostics/
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.m4a
+*.webm
+*.log
+*.safetensors
